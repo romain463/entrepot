@@ -596,7 +596,7 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var n,r,i,a,
   .hist-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:12px 20px;background:var(--card);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:2}
   .hist-table-wrap{padding:0 20px 40px}
   table.log{width:100%;border-collapse:collapse;font-size:12.5px;min-width:1050px}
-  table.log th{position:sticky;top:57px;background:var(--paper);text-align:left;font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;font-weight:700;padding:9px 10px;border-bottom:2px solid var(--line);white-space:nowrap;z-index:1}
+  table.log th{position:sticky;top:0;background:var(--paper);text-align:left;font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;font-weight:700;padding:9px 10px;border-bottom:2px solid var(--line);white-space:nowrap;z-index:3;box-shadow:0 1px 0 var(--line)}
   table.log td{padding:9px 10px;border-bottom:1px solid var(--line-2);white-space:nowrap}
   table.log tr{cursor:pointer}
   table.log tbody tr:hover td{background:var(--paper)}
@@ -867,6 +867,7 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var n,r,i,a,
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
       <input id="trSearch" type="text" placeholder="N° demande ou n° PO…">
     </div>
+    <select class="filter" id="trMonth"><option value="">Tous les mois</option></select>
     <select class="filter" id="trTransp"><option value="">Tous les transporteurs</option></select>
     <select class="filter" id="trScope" style="display:none"><option value="all">Toutes</option></select>
     <label class="checkbox" style="font-size:12.5px;color:var(--ink-2)"><input type="checkbox" id="trShipped"> Inclure les commandes expédiées (rattrapage)</label>
@@ -1565,7 +1566,7 @@ function renderDashboard(){
 function transportInPeriod(){
   const cutoff=dashPeriod==='all'?0:Date.now()-dashPeriod*86400000;
   // Transport "acté" : les demandes autonomes, et les commandes seulement une fois EXPÉDIÉES
-  return state.orders.filter(o=>o.transporteur&&(isTransport(o)||o.statut==='expediee')&&transportTs(o)>=cutoff);
+  return state.orders.filter(o=>o.transporteur&&!o.trHidden&&(isTransport(o)||o.statut==='expediee')&&transportTs(o)>=cutoff);
 }
 function aggByTransp(list){
   const m={};list.forEach(o=>{const k=o.transporteur||'—';const a=m[k]||(m[k]={nom:k,dep:0,nb:0,pal:0,poids:0});a.dep+=(+o.prixTransport||0);a.nb++;a.pal+=(+o.palettes||0);a.poids+=(+o.poids||0);});
@@ -1785,23 +1786,38 @@ function trScopeMatch(o,scope){
   if(scope==='toexp')return o.statut==='preparee'||o.statut==='expediee';
   return true;
 }
+function trMonthKey(o){
+  // mois de transport : priorité à la date de chargement, puis expédition, puis mise à jour
+  if(o.dateChargement){const p=(''+o.dateChargement).split('-');if(p.length===3)return p[0]+'-'+p[1];}
+  const ts=o.shippedAt||o.updatedAt||transportTs(o);if(!ts)return'';const d=new Date(ts);return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');}
+function trMonthLabel(key){if(!key)return'';const[y,m]=key.split('-');const noms=['janvier','février','mars','avril','mai','juin','juillet','août','septembre','octobre','novembre','décembre'];return noms[(+m)-1]+' '+y;}
 function renderTransport(){
   const nb=$('#btnNewDemande');if(nb)nb.style.display=ui.role==='agence'?'none':'inline-flex';
   const tf=$('#trTransp');if(tf){const keep=tf.value;tf.innerHTML='<option value="">Tous les transporteurs</option>'+transpNames().map(n=>`<option>${esc(n)}</option>`).join('');tf.value=keep;}
-  const q=$('#trSearch').value.trim().toLowerCase(),ft=$('#trTransp').value;
   const inclShip=$('#trShipped')&&$('#trShipped').checked;
-  const rows=state.orders.filter(o=>{
-    const keepKind = o.kind==='transport' || (inclShip && o.statut==='expediee');  // demandes + (rattrapage) commandes expédiées
-    if(!keepKind)return false;
+  // base : demandes + (rattrapage) commandes expédiées, hors éléments masqués de la liste transport
+  const base=state.orders.filter(o=>(o.kind==='transport'||(inclShip&&o.statut==='expediee'))&&!o.trHidden);
+  // remplir le sélecteur de mois à partir des éléments disponibles
+  const mf=$('#trMonth');if(mf){const keepM=mf.value;const months=[...new Set(base.map(trMonthKey).filter(Boolean))].sort().reverse();
+    mf.innerHTML='<option value="">Tous les mois</option>'+months.map(k=>`<option value="${k}">${trMonthLabel(k)}</option>`).join('');
+    mf.value=months.includes(keepM)?keepM:'';}
+  const q=$('#trSearch').value.trim().toLowerCase(),ft=$('#trTransp').value,fm=$('#trMonth')?$('#trMonth').value:'';
+  const rows=base.filter(o=>{
     if(ft&&o.transporteur!==ft)return false;
+    if(fm&&trMonthKey(o)!==fm)return false;
     if(q&&!((o.num+' '+(o.po||'')+' '+(o.agence||'')).toLowerCase().includes(q)))return false;
     return true;
   }).sort((a,b)=>(b.shippedAt||b.updatedAt||0)-(a.shippedAt||a.updatedAt||0));
   const dc=v=>v?fmtDateFR(v):'<span class="ts none">—</span>';
+  const canDel=ui.role==='chef';
   $('#trTable').innerHTML=`<thead><tr><th>N° TO / demande</th><th>PO</th><th>Destination</th><th>Transporteur</th><th>Pal.</th><th>Poids</th><th>ADR</th><th>Prix</th><th>Chargt</th><th>Livr.</th><th>Statut</th><th></th></tr></thead><tbody>`+
     rows.map(o=>{const st=statusByKey(o.statut);const adr=hasADR(o);const demande=isTransport(o);
     const open=demande?`openTransportDemande('${o.id}')`:`openDetail('${o.id}')`;
     const badge=demande?`<span class="stbadge" style="background:#eef2ff;color:#4f46e5">Demande</span>`:`<span class="stbadge" style="background:${st.color}22;color:${st.color}">${st.label}</span>`;
+    // suppression : demande → suppression réelle ; TO rattrapé → masquer de la liste transport
+    const delBtn=canDel?(demande
+      ?`<button class="btn sm" style="color:var(--urgent)" onclick="event.stopPropagation();delDemande('${o.id}')" title="Supprimer la demande">✕</button>`
+      :`<button class="btn sm" style="color:var(--urgent)" onclick="event.stopPropagation();hideFromTransport('${o.id}')" title="Retirer de la liste transport (ne supprime pas la commande)">✕</button>`):'';
     return `<tr onclick="${open}">
       <td class="to">${esc(o.num)}${demande?' <span style="color:#4f46e5;font-size:9px">●</span>':''}</td>
       <td>${o.po?esc(o.po):'<span class="ts none">—</span>'}</td>
@@ -1814,10 +1830,12 @@ function renderTransport(){
       <td class="ts">${dc(o.dateChargement)}</td>
       <td class="ts">${dc(o.dateLivraison)}</td>
       <td>${badge}</td>
-      <td><button class="btn sm" onclick="event.stopPropagation();genTransportPDF('${o.id}')" title="Générer le bon de transport">PDF</button></td>
+      <td style="white-space:nowrap"><button class="btn sm" onclick="event.stopPropagation();genTransportPDF('${o.id}')" title="Générer le bon de transport">PDF</button> ${delBtn}</td>
     </tr>`;}).join('')+`</tbody>`;
-  $('#trEmpty').innerHTML=rows.length?'':'<div class="empty-big">Aucune demande. Cochez « Inclure les commandes expédiées » pour compléter une expédition (rattrapage), ou créez une nouvelle demande.</div>';
+  $('#trEmpty').innerHTML=rows.length?'':'<div class="empty-big">Aucune demande pour ce filtre. Cochez « Inclure les commandes expédiées » pour compléter une expédition (rattrapage), ou créez une nouvelle demande.</div>';
 }
+function delDemande(id){if(!confirm('Supprimer définitivement cette demande de transport ?'))return;Store.removeOrder(id);renderTransport();flash('Demande supprimée');}
+function hideFromTransport(id){const o=getOrder(id);if(!o)return;if(!confirm('Retirer '+o.num+' de la liste transport ?\n(La commande et son historique ne sont pas supprimés.)'))return;o.trHidden=true;o.updatedAt=Date.now();Store.saveOrder(o);renderTransport();flash(o.num+' retiré de la liste transport');}
 /* ---- Demande de transport autonome (sans TO) ---- */
 function openNewDemande(){openTransportDemande(null);}
 function openTransportDemande(id){
@@ -1831,6 +1849,26 @@ function openTransportDemande(id){
         <div class="field mono" style="margin:0"><label>N° demande</label><input id="dNum" value="${o?esc(o.num):esc(nextDTNum())}"></div>
         <div class="field" style="margin:0"><label>Destination (agence ou libre)</label><input id="dAgence" list="agencesList" value="${o?esc(o.agence||''):''}" placeholder="Agence ou texte libre"><datalist id="agencesList">${state.agences.map(a=>`<option>${esc(a)}</option>`).join('')}</datalist></div>
         <div class="field" style="margin:0"><label>N° PO</label><input id="dPo" value="${o?esc(o.po||''):''}" placeholder="optionnel"></div>
+      </div>
+
+      <div class="row2" style="margin-top:10px">
+        <div class="field" style="margin:0"><label>Lieu d'enlèvement</label>
+          <select id="dEnlevSel" onchange="toggleEnlevCustom()">
+            <option value="" ${!(o&&o.enlevSel)?'selected':''}>Magasin Central (par défaut)</option>
+            ${state.agences.map(a=>`<option value="ag:${esc(a)}" ${o&&o.enlevSel==='ag:'+a?'selected':''}>SAFETY KLEEN ${esc(a)}</option>`).join('')}
+            <option value="custom" ${o&&o.enlevSel==='custom'?'selected':''}>Autre adresse…</option>
+          </select>
+          <div id="dEnlevCustom" style="display:${o&&o.enlevSel==='custom'?'block':'none'};margin-top:6px">
+            <input id="dEnlevRue" placeholder="Rue" value="${o&&o.enlevParts?esc(o.enlevParts.rue||''):''}">
+            <input id="dEnlevVille" placeholder="Ville" value="${o&&o.enlevParts?esc(o.enlevParts.ville||''):''}" style="margin-top:5px">
+            <input id="dEnlevCp" placeholder="Code postal" value="${o&&o.enlevParts?esc(o.enlevParts.cp||''):''}" style="margin-top:5px">
+          </div>
+        </div>
+        <div class="field" style="margin:0"><label>Adresse de destination <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted)">— si hors agence</span></label>
+          <input id="dDestRue" placeholder="Rue" value="${o&&o.destParts?esc(o.destParts.rue||''):''}">
+          <input id="dDestVille" placeholder="Ville" value="${o&&o.destParts?esc(o.destParts.ville||''):''}" style="margin-top:5px">
+          <input id="dDestCp" placeholder="Code postal" value="${o&&o.destParts?esc(o.destParts.cp||''):''}" style="margin-top:5px">
+        </div>
       </div>
       <div class="row3" style="margin-top:10px">
         <div class="field" style="margin:0"><label>Palettes</label><input id="dPal" type="number" min="0" value="${o?(o.palettes||0):0}"></div>
@@ -1870,10 +1908,25 @@ function openTransportDemande(id){
     <div class="modal-foot">${o?`<button class="btn ghost" style="color:var(--urgent)" onclick="deleteOrder('${o.id}')">Supprimer</button>`:''}<div class="spacer"></div>${o?`<button class="btn" onclick="saveDemande('${o.id}');genTransportPDF('${o.id}')">⬇ PDF</button>`:''}<button class="btn" onclick="closeModal()">Annuler</button><button class="btn primary" onclick="saveDemande(${o?`'${o.id}'`:'null'})">${o?'Enregistrer':'Créer la demande'}</button></div></div>`;
   overlay.classList.add('show');
 }
+function toggleEnlevCustom(){const sel=$('#dEnlevSel');const box=$('#dEnlevCustom');if(sel&&box)box.style.display=sel.value==='custom'?'block':'none';}
+function computeEnlev(g){
+  const sel=g('#dEnlevSel')?g('#dEnlevSel').value:'';
+  if(sel==='custom'){const rue=g('#dEnlevRue').value.trim(),ville=g('#dEnlevVille').value.trim(),cp=g('#dEnlevCp').value.trim();
+    return {enlevSel:'custom',enlevParts:{rue,ville,cp},enlevLieu:buildAddr(rue,ville,cp)};}
+  if(sel&&sel.indexOf('ag:')===0){const a=sel.slice(3),info=agenceInfo(a);
+    return {enlevSel:sel,enlevParts:null,enlevLieu:'SAFETY KLEEN '+a+(info.adresse?('\n'+info.adresse):'')};}
+  return {enlevSel:'',enlevParts:null,enlevLieu:''};   // défaut Magasin Central
+}
+function computeDest(g){
+  const rue=g('#dDestRue')?g('#dDestRue').value.trim():'',ville=g('#dDestVille')?g('#dDestVille').value.trim():'',cp=g('#dDestCp')?g('#dDestCp').value.trim():'';
+  const addr=buildAddr(rue,ville,cp);
+  return {destParts:(rue||ville||cp)?{rue,ville,cp}:null,destAdresse:addr};
+}
 function saveDemande(id){
   const g=s=>$(s);const num=g('#dNum').value.trim();if(!num){flash('N° de demande requis');return;}
   const data={
     num,agence:g('#dAgence').value.trim(),po:g('#dPo').value.trim(),
+    ...computeEnlev(g),...computeDest(g),
     palettes:+g('#dPal').value||0,poids:+g('#dPoids').value||0,metrage:g('#dMetr').value!==''?(+g('#dMetr').value||0):'',
     transporteur:g('#trSel').value,prixTransport:+g('#trPrix').value||0,modeleOverride:g('#trModele').value,
     typeTransport:g('#dType').value,suiviPar:g('#dSuivi').value,dimensions:g('#dDim').value.trim(),
@@ -1887,9 +1940,9 @@ function saveDemande(id){
   Store.saveOrder(o);if(view==='transport')renderTransport();closeModal();
 }
 function exportTransport(){
-  const q=$('#trSearch').value.trim().toLowerCase(),ft=$('#trTransp').value;
+  const q=$('#trSearch').value.trim().toLowerCase(),ft=$('#trTransp').value,fm=$('#trMonth')?$('#trMonth').value:'';
   const inclShip=$('#trShipped')&&$('#trShipped').checked;
-  const rows=state.orders.filter(o=>{if(!(o.kind==='transport'||(inclShip&&o.statut==='expediee')))return false;if(ft&&o.transporteur!==ft)return false;if(q&&!((o.num+' '+(o.po||'')+' '+(o.agence||'')).toLowerCase().includes(q)))return false;return true;}).sort((a,b)=>(b.shippedAt||b.updatedAt||0)-(a.shippedAt||a.updatedAt||0));
+  const rows=state.orders.filter(o=>{if(!((o.kind==='transport'||(inclShip&&o.statut==='expediee'))&&!o.trHidden))return false;if(ft&&o.transporteur!==ft)return false;if(fm&&trMonthKey(o)!==fm)return false;if(q&&!((o.num+' '+(o.po||'')+' '+(o.agence||'')).toLowerCase().includes(q)))return false;return true;}).sort((a,b)=>(b.shippedAt||b.updatedAt||0)-(a.shippedAt||a.updatedAt||0));
   const out=[['N° TO / demande','PO','Destination','Transporteur','Palettes','Poids (kg)','ADR','Prix (€)','Date chargement','Date livraison']];
   rows.forEach(o=>{const adr=hasADR(o);out.push([o.num,o.po||'',o.agence,o.transporteur||'',o.palettes||0,fmtQte(o.poids||0),adr?'OUI':'non',o.prixTransport?fmtQte(o.prixTransport):'',fmtDateFR(o.dateChargement),fmtDateFR(o.dateLivraison)]);});
   downloadCSV('transport_'+new Date().toISOString().slice(0,10)+'.csv',out);
@@ -1927,6 +1980,9 @@ function pdfBar(doc,x,y,w,h,color,text,tc,size){
 }
 function savePdf(doc,prefix,o){const fn=prefix+'_'+((o.num||'TO').replace(/[^A-Za-z0-9_-]/g,''))+'.pdf';doc.save(fn);flash('PDF généré : '+fn);}
 function demandeDate(o){return o.dateDemande?fmtDateFR(o.dateDemande):new Date().toLocaleDateString('fr-FR');}
+function buildAddr(rue,ville,cp){return [rue,ville,cp].map(x=>(x||'').trim()).filter(Boolean).join('\n');}
+function chgText(o){return (o.enlevLieu&&o.enlevLieu.trim())?o.enlevLieu:((state.chargement||{}).lieu||'');}
+function livText(o){const ag=agenceInfo(o.agence);if(o.destAdresse&&o.destAdresse.trim())return (o.agence?o.agence+'\n':'')+o.destAdresse;return 'SAFETY KLEEN '+(o.agence||'')+(ag.adresse?('\n'+ag.adresse):'');}
 
 /* ---- Cadre « DEMANDE DE TRANSPORT » (Géodis) ---- */
 function pdfGeodis(o){
@@ -1936,8 +1992,8 @@ function pdfGeodis(o){
   const hasAdr=hasADR(o);
   const NAVY=[14,22,46],BLUE=[47,107,156],GOLD=[242,201,76],RED=[150,45,45];
   const lab=38,val=CW/2-38;
-  const chgLieu=CH.lieu||'';
-  const livLieu='SAFETY KLEEN '+(o.agence||'')+(ag.adresse?('\n'+ag.adresse):'');
+  const chgLieu=chgText(o);
+  const livLieu=livText(o);
   let y=12;
   pdfBar(doc,M,y,CW,8,NAVY,'DEMANDE DE TRANSPORT',[255,255,255],13);y+=8;
   doc.autoTable({startY:y,margin:{left:M,right:M},theme:'grid',tableWidth:CW,styles:{fontSize:9,cellPadding:2,lineColor:[210,214,220],valign:'middle'},
@@ -2007,8 +2063,8 @@ function pdfBT(o,t){
   goldLabel('Référence de chargement  :',y,70);doc.setFont('helvetica','normal');doc.setFontSize(10);doc.text(o.refChargement||'',M+78,y);y+=8;
   const colW=(W-2*M-8)/2;
   const addrBox=(x,title,bodyText)=>{doc.setFillColor(BLUE[0],BLUE[1],BLUE[2]);doc.rect(x,y,colW,6,'F');doc.setTextColor(255,255,255);doc.setFont('helvetica','bold');doc.setFontSize(9);doc.text(title,x+colW/2,y+4,{align:'center'});doc.setDrawColor(40);doc.rect(x,y+6,colW,26);doc.setTextColor(20,20,20);doc.setFont('helvetica','normal');doc.setFontSize(8.5);bodyText.split('\n').forEach((ln,i)=>doc.text(ln,x+colW/2,y+12+i*4,{align:'center'}));};
-  addrBox(M,'Lieu de chargement',CH.lieu||'');
-  addrBox(M+colW+8,'Lieu de livraison','SAFETY KLEEN '+(o.agence||'')+(ag.adresse?('\n'+ag.adresse):''));
+  addrBox(M,'Lieu de chargement',chgText(o));
+  addrBox(M+colW+8,'Lieu de livraison',livText(o));
   y+=38;
   const dateBox=(x,val)=>{doc.setDrawColor(40);doc.rect(x,y,colW,12);doc.setFont('helvetica','normal');doc.setFontSize(9);doc.setTextColor(20);doc.text('Date:',x+colW/2,y+4,{align:'center'});doc.text(val||'',x+colW/2,y+9,{align:'center'});};
   dateBox(M,fmtDateFR(o.dateChargement));dateBox(M+colW+8,fmtDateFR(o.dateLivraison));
@@ -2187,7 +2243,7 @@ function applyRename(oldName,kind){
   flash('Renommé en « '+nn+' »'+(touched?(' · '+touched+' commande'+(touched>1?'s':'')+' mise'+(touched>1?'s':'')+' à jour'):''));
 }
 
-const BUILD='2026-10-22-expe-directe-rattrapage';
+const BUILD='2026-10-27-transport-entete-fix';
 function openData(){
   const cloud=Store.mode==='cloud';
   overlay.innerHTML=`<div class="modal"><div class="modal-head"><h3>Données &amp; sauvegarde</h3><button class="x" onclick="closeModal()">×</button></div>
@@ -2236,7 +2292,7 @@ $('#btnSettings').addEventListener('click',openSettings);
 $('#btnData').addEventListener('click',openData);
 ['#search','#filterAgence','#filterOp','#filterUrgent'].forEach(s=>{$(s).addEventListener('input',renderBoard);$(s).addEventListener('change',renderBoard);});
 ['#histSearch','#histAgence','#histStatut','#histShipped'].forEach(s=>{$(s).addEventListener('input',renderHistory);$(s).addEventListener('change',renderHistory);});
-['#trSearch','#trTransp','#trScope','#trShipped'].forEach(s=>{$(s).addEventListener('input',renderTransport);$(s).addEventListener('change',renderTransport);});
+['#trSearch','#trTransp','#trScope','#trShipped','#trMonth'].forEach(s=>{$(s).addEventListener('input',renderTransport);$(s).addEventListener('change',renderTransport);});
 $('#btnExportTransp').addEventListener('click',exportTransport);
 $('#btnNewDemande').addEventListener('click',openNewDemande);
 $('#btnExportTranspDash').addEventListener('click',exportTranspDash);
