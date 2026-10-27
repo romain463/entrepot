@@ -1847,7 +1847,7 @@ function openTransportDemande(id){
     <div class="modal-body">
       <div class="row3">
         <div class="field mono" style="margin:0"><label>N° demande</label><input id="dNum" value="${o?esc(o.num):esc(nextDTNum())}"></div>
-        <div class="field" style="margin:0"><label>Destination (agence ou libre)</label><input id="dAgence" list="agencesList" value="${o?esc(o.agence||''):''}" placeholder="Agence ou texte libre"><datalist id="agencesList">${state.agences.map(a=>`<option>${esc(a)}</option>`).join('')}</datalist></div>
+        <div class="field" style="margin:0"><label>Destination (agence ou libre)</label><input id="dAgence" list="agencesList" value="${o?esc(o.agence||''):''}" placeholder="Agence ou texte libre"><datalist id="agencesList"><option>Magasin Central</option>${state.agences.map(a=>`<option>${esc(a)}</option>`).join('')}</datalist></div>
         <div class="field" style="margin:0"><label>N° PO</label><input id="dPo" value="${o?esc(o.po||''):''}" placeholder="optionnel"></div>
       </div>
 
@@ -1982,7 +1982,12 @@ function savePdf(doc,prefix,o){const fn=prefix+'_'+((o.num||'TO').replace(/[^A-Z
 function demandeDate(o){return o.dateDemande?fmtDateFR(o.dateDemande):new Date().toLocaleDateString('fr-FR');}
 function buildAddr(rue,ville,cp){return [rue,ville,cp].map(x=>(x||'').trim()).filter(Boolean).join('\n');}
 function chgText(o){return (o.enlevLieu&&o.enlevLieu.trim())?o.enlevLieu:((state.chargement||{}).lieu||'');}
-function livText(o){const ag=agenceInfo(o.agence);if(o.destAdresse&&o.destAdresse.trim())return (o.agence?o.agence+'\n':'')+o.destAdresse;return 'SAFETY KLEEN '+(o.agence||'')+(ag.adresse?('\n'+ag.adresse):'');}
+function livText(o){
+  if(o.destAdresse&&o.destAdresse.trim())return (o.agence?o.agence+'\n':'')+o.destAdresse;
+  if(/magasin central/i.test(o.agence||'')){const CH=state.chargement||{};return CH.lieu||('SAFETY KLEEN '+(o.agence||''));}
+  const ag=agenceInfo(o.agence);
+  return 'SAFETY KLEEN '+(o.agence||'')+(ag.adresse?('\n'+ag.adresse):'');
+}
 
 /* ---- Cadre « DEMANDE DE TRANSPORT » (Géodis) ---- */
 function pdfGeodis(o){
@@ -2243,7 +2248,7 @@ function applyRename(oldName,kind){
   flash('Renommé en « '+nn+' »'+(touched?(' · '+touched+' commande'+(touched>1?'s':'')+' mise'+(touched>1?'s':'')+' à jour'):''));
 }
 
-const BUILD='2026-10-27-transport-entete-fix';
+const BUILD='2026-10-27-destination-magasin-central';
 function openData(){
   const cloud=Store.mode==='cloud';
   overlay.innerHTML=`<div class="modal"><div class="modal-head"><h3>Données &amp; sauvegarde</h3><button class="x" onclick="closeModal()">×</button></div>
